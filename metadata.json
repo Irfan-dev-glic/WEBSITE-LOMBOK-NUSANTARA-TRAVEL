@@ -1,0 +1,6 @@
+{
+  "name": "Lombok Nusantara Travel – Paket Wisata Lombok, Open Trip Gili & Tur Privat",
+  "description": "Agen perjalanan wisata resmi di Lombok. Pesan langsung paket wisata Gili Trawangan, Kuta Mandalika, Pink Beach, pendakian Rinjani, sewa mobil, dan transfer bandara LOP dengan harga jujur tanpa komisi OTA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
