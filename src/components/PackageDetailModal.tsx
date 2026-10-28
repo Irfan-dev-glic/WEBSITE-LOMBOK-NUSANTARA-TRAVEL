@@ -1,19 +1,26 @@
-import React, { useState } from 'react';
-import { X, Check, Calendar, Users, ArrowRight, Copy, CheckCircle2, HelpCircle, MapPin } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Check, ArrowRight, Copy, CheckCircle2, HelpCircle, MapPin, Database, LogIn } from 'lucide-react';
+import { User } from 'firebase/auth';
+import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { TourPackage, Language, Currency } from '../data/lombokData';
+import { db, signInWithGoogle, handleFirestoreError, OperationType } from '../firebase';
 
 interface PackageDetailModalProps {
   pkg: TourPackage | null;
   lang: Language;
   currency: Currency;
+  user: User | null;
   onClose: () => void;
+  onOpenReservations: () => void;
 }
 
 export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
   pkg,
   lang,
   currency,
-  onClose
+  user,
+  onClose,
+  onOpenReservations
 }) => {
   if (!pkg) return null;
 
@@ -23,12 +30,21 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
   const [travelDate, setTravelDate] = useState<string>('2026-11-15');
   const [addDrone, setAddDrone] = useState<boolean>(false);
   const [addAirportPickup, setAddAirportPickup] = useState<boolean>(false);
-  const [guestName, setGuestName] = useState<string>('');
-  const [guestContact, setGuestContact] = useState<string>('');
+  const [guestName, setGuestName] = useState<string>(user?.displayName || '');
+  const [guestContact, setGuestContact] = useState<string>(user?.email || '');
   const [pickupNotes, setPickupNotes] = useState<string>('');
   const [formError, setFormError] = useState<string>('');
   const [bookingSubmitted, setBookingSubmitted] = useState<boolean>(false);
+  const [savedToCloud, setSavedToCloud] = useState<boolean>(false);
+  const [savingCloud, setSavingCloud] = useState<boolean>(false);
   const [copiedSummary, setCopiedSummary] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (user) {
+      if (!guestName && user.displayName) setGuestName(user.displayName.slice(0, 100));
+      if (!guestContact && user.email) setGuestContact(user.email.slice(0, 120));
+    }
+  }, [user]);
 
   const formatMoney = (idr: number, usd: number) => {
     if (currency === 'IDR') {
@@ -37,7 +53,6 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
     return `$${usd.toLocaleString('en-US')}`;
   };
 
-  // Group discount calculation: 5% off for 4-7 pax, 10% off for 8+ pax
   const discountRate = pax >= 8 ? 0.1 : pax >= 4 ? 0.05 : 0;
   const unitIdr = Math.round(pkg.priceIdr * (1 - discountRate));
   const unitUsd = Math.round(pkg.priceUsd * (1 - discountRate));
@@ -54,51 +69,104 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
   const savedIdr = otaTotalIdr - totalIdr;
   const savedUsd = otaTotalUsd - totalUsd;
 
-  const bookingRef = `LNT-${pkg.id.slice(-4).toUpperCase()}-${ pax }P`;
+  const cleanSlugCode = pkg.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
+  const bookingRef = `LNT-${cleanSlugCode}-${pax}P`;
+
+  const addOnsText = [
+    addDrone ? 'Dokumentasi Drone' : '',
+    addAirportPickup ? 'Jemput Bandara LOP' : ''
+  ]
+    .filter(Boolean)
+    .join(', ')
+    .slice(0, 200);
+
+  const persistBookingToFirestore = async (activeUser: User) => {
+    setSavingCloud(true);
+    const newDocRef = doc(collection(db, 'bookings'));
+    const path = `bookings/${newDocRef.id}`;
+    try {
+      await setDoc(newDocRef, {
+        ownerId: activeUser.uid,
+        bookingRef: bookingRef.slice(0, 32),
+        packageId: pkg.id.slice(0, 64),
+        packageTitle: pkg.title[lang].slice(0, 160),
+        travelDate: travelDate.slice(0, 20),
+        pax: Math.min(200, Math.max(1, Math.round(pax))),
+        totalPriceIdr: Math.min(1000000000, Math.max(0, Math.round(totalIdr))),
+        totalPriceUsd: Math.min(100000, Math.max(0, Math.round(totalUsd))),
+        addOns: addOnsText,
+        guestName: guestName.trim().slice(0, 100),
+        guestContact: guestContact.trim().slice(0, 120),
+        pickupNotes: pickupNotes.trim().slice(0, 300),
+        status: 'pending',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      setSavedToCloud(true);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, path);
+    } finally {
+      setSavingCloud(false);
+    }
+  };
 
   const buildWhatsAppMessage = () => {
     const title = pkg.title[lang];
     const totalStr = formatMoney(totalIdr, totalUsd);
     if (lang === 'id') {
-      return `Halo Admin Lombok Nusantara Travel, saya ingin booking langsung tanpa OTA:\n\n` +
+      return `Halo Admin LOMBOK NUSANTARA TRAVEL, saya ingin booking langsung tanpa OTA:\n\n` +
         `• Kode Referensi: ${bookingRef}\n` +
         `• Paket: ${title}\n` +
         `• Tanggal Keberangkatan: ${travelDate}\n` +
         `• Jumlah Peserta: ${pax} Orang\n` +
-        `• Tambahan: ${[addDrone ? 'Dokumentasi Drone' : '', addAirportPickup ? 'Jemput Bandara LOP' : ''].filter(Boolean).join(', ') || 'Tidak ada'}\n` +
+        `• Tambahan: ${addOnsText || 'Tidak ada'}\n` +
         `• Estimasi Total Langsung: ${totalStr}\n` +
         `• Nama Pemesan: ${guestName}\n` +
         `• Kontak/WA: ${guestContact}\n` +
         `• Catatan Hotel/Penerbangan: ${pickupNotes || '-'}`;
     }
-    return `Hello Lombok Nusantara Travel, I would like to request a direct booking:\n\n` +
+    return `Hello LOMBOK NUSANTARA TRAVEL, I would like to request a direct booking:\n\n` +
       `• Reference: ${bookingRef}\n` +
       `• Package: ${title}\n` +
       `• Travel Date: ${travelDate}\n` +
       `• Guests: ${pax} Pax\n` +
-      `• Add-ons: ${[addDrone ? 'DJI Drone Footage' : '', addAirportPickup ? 'LOP Airport Pickup' : ''].filter(Boolean).join(', ') || 'None'}\n` +
+      `• Add-ons: ${addOnsText || 'None'}\n` +
       `• Direct Total Estimate: ${totalStr}\n` +
       `• Guest Name: ${guestName}\n` +
       `• Contact/WhatsApp: ${guestContact}\n` +
       `• Hotel/Flight Notes: ${pickupNotes || '-'}`;
   };
 
-  const handleConfirmBooking = (e: React.FormEvent) => {
+  const handleConfirmBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!guestName.trim() || guestName.trim().length < 2) {
-      setFormError(lang === 'id' ? 'Mohon isi nama lengkap pemesan.' : 'Please enter your full name.');
+      setFormError(lang === 'id' ? 'Mohon isi nama lengkap pemesan (min. 2 karakter).' : 'Please enter your full name.');
       return;
     }
-    if (!guestContact.trim() || guestContact.trim().length < 7) {
+    if (!guestContact.trim() || guestContact.trim().length < 5) {
       setFormError(
         lang === 'id'
-          ? 'Mohon isi nomor WhatsApp atau email aktif untuk pengiriman konfirmasi.'
+          ? 'Mohon isi nomor WhatsApp atau email aktif (min. 5 karakter).'
           : 'Please enter a valid WhatsApp number or email address.'
       );
       return;
     }
     setFormError('');
+    if (user) {
+      await persistBookingToFirestore(user);
+    }
     setBookingSubmitted(true);
+  };
+
+  const handleLoginAndSave = async () => {
+    try {
+      const cred = await signInWithGoogle();
+      if (cred.user) {
+        await persistBookingToFirestore(cred.user);
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Gagal masuk dengan Google.');
+    }
   };
 
   const handleCopySummary = () => {
@@ -308,7 +376,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
             )}
           </div>
 
-          {/* Right 5 columns: Direct Booking Calculator & Instant Inquiry */}
+          {/* Right 5 columns: Direct Booking Calculator & Firestore Persistence */}
           <div className="lg:col-span-5">
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 sticky top-4">
               <div className="pb-4 border-b border-slate-200">
@@ -342,15 +410,13 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                       <label className="block text-xs font-medium text-slate-700 mb-1">
                         {lang === 'id' ? 'Tanggal Tur' : 'Travel Date'}
                       </label>
-                      <div className="relative">
-                        <input
-                          type="date"
-                          value={travelDate}
-                          onChange={(e) => setTravelDate(e.target.value)}
-                          className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg font-mono-num focus:outline-none focus:border-teal-700"
-                          required
-                        />
-                      </div>
+                      <input
+                        type="date"
+                        value={travelDate}
+                        onChange={(e) => setTravelDate(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg font-mono-num focus:outline-none focus:border-teal-700"
+                        required
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -421,6 +487,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                       </label>
                       <input
                         type="text"
+                        maxLength={100}
                         value={guestName}
                         onChange={(e) => setGuestName(e.target.value)}
                         placeholder={lang === 'id' ? 'Contoh: Budi Santoso' : 'e.g. Sarah Jenkins'}
@@ -433,6 +500,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                       </label>
                       <input
                         type="text"
+                        maxLength={120}
                         value={guestContact}
                         onChange={(e) => setGuestContact(e.target.value)}
                         placeholder={lang === 'id' ? '+62 812-xxxx-xxxx' : '+61 4xx xxx xxx / email'}
@@ -445,6 +513,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                       </label>
                       <input
                         type="text"
+                        maxLength={300}
                         value={pickupNotes}
                         onChange={(e) => setPickupNotes(e.target.value)}
                         placeholder={lang === 'id' ? 'Contoh: Katamaran Resort Senggigi / GA-432' : 'e.g. Pullman Mandalika / Flight TR-260'}
@@ -485,9 +554,22 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
 
                   <button
                     type="submit"
+                    disabled={savingCloud}
                     className="w-full py-3 px-4 bg-teal-800 hover:bg-teal-900 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
                   >
-                    <span>{lang === 'id' ? 'Buat Draf Booking & Kunci Harga' : 'Generate Direct Booking Voucher'}</span>
+                    <span>
+                      {savingCloud
+                        ? lang === 'id'
+                          ? 'Menyimpan ke Cloud Database...'
+                          : 'Saving to Cloud Database...'
+                        : user
+                        ? lang === 'id'
+                          ? 'Simpan Booking ke Database & Kunci Harga'
+                          : 'Save Booking to Database & Lock Rate'
+                        : lang === 'id'
+                        ? 'Buat Draf Booking & Kunci Harga'
+                        : 'Generate Direct Booking Voucher'}
+                    </span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </form>
@@ -497,14 +579,50 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                     <div className="flex items-center gap-2 text-teal-900 font-semibold text-sm">
                       <CheckCircle2 className="w-5 h-5 text-teal-700 shrink-0" />
                       <span>
-                        {lang === 'id' ? 'Draf Reservasi Siap Dikirim' : 'Direct Reservation Voucher Ready'}
+                        {savedToCloud
+                          ? lang === 'id'
+                            ? 'Tersimpan di Database Cloud Firestore!'
+                            : 'Saved to Cloud Firestore Database!'
+                          : lang === 'id'
+                          ? 'Draf Reservasi Siap Dikirim'
+                          : 'Direct Reservation Voucher Ready'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-700 leading-relaxed">
                       {lang === 'id'
-                        ? `Kode booking Anda adalah ${bookingRef}. Tidak ada biaya yang ditagihkan saat ini—tim konsultan lokal kami di Senggigi akan memverifikasi ketersediaan kuota dalam 10 menit.`
-                        : `Your booking reference is ${bookingRef}. No upfront card charge is taken right now—our local Lombok desk will confirm slot availability within 10 minutes.`}
+                        ? `Kode booking Anda adalah ${bookingRef}. ${
+                            savedToCloud
+                              ? 'Data reservasi telah tersimpan secara aman di koleksi /bookings Firestore Anda.'
+                              : 'Masuk dengan Google di bawah jika ingin menyimpan pesanan ini ke riwayat database akun Anda.'
+                          }`
+                        : `Your booking reference is ${bookingRef}. ${
+                            savedToCloud
+                              ? 'Your reservation has been securely stored in your /bookings Firestore collection.'
+                              : 'Sign in with Google below if you would like to persist this record in your cloud account.'
+                          }`}
                     </p>
+                    {savedToCloud ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenReservations();
+                        }}
+                        className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800 underline cursor-pointer"
+                      >
+                        <Database className="w-3.5 h-3.5" />
+                        <span>{lang === 'id' ? 'Lihat di Dashboard Database Reservasi →' : 'View in Cloud Reservations Console →'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleLoginAndSave}
+                        className="mt-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>{lang === 'id' ? 'Login Google & Simpan ke Database Cloud' : 'Google Sign-In & Save to Cloud DB'}</span>
+                      </button>
+                    )}
                   </div>
 
                   <div className="p-3.5 bg-white border border-slate-200 rounded-lg font-mono-num text-xs text-slate-700 whitespace-pre-line leading-relaxed">
@@ -540,7 +658,10 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => setBookingSubmitted(false)}
+                    onClick={() => {
+                      setBookingSubmitted(false);
+                      setSavedToCloud(false);
+                    }}
                     className="w-full py-2 text-xs text-slate-500 hover:text-slate-800 underline cursor-pointer"
                   >
                     {lang === 'id' ? 'Ubah jumlah peserta atau tanggal' : 'Modify date or guest count'}

@@ -1,0 +1,290 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Zero-lookup admin check safe for list queries (Pillar 8 Cost-Optimization Clause)
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'muhammadhuasin9011@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Entity Validation Blueprints (Anti-Update-Gap)
+    function isValidBooking(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'bookingRef',
+        'packageId',
+        'packageTitle',
+        'travelDate',
+        'pax',
+        'totalPriceIdr',
+        'totalPriceUsd',
+        'addOns',
+        'guestName',
+        'guestContact',
+        'pickupNotes',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'bookingRef',
+        'packageId',
+        'packageTitle',
+        'travelDate',
+        'pax',
+        'totalPriceIdr',
+        'totalPriceUsd',
+        'addOns',
+        'guestName',
+        'guestContact',
+        'pickupNotes',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.bookingRef is string && data.bookingRef.size() >= 4 && data.bookingRef.size() <= 32 && data.bookingRef.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.packageId is string && data.packageId.size() >= 3 && data.packageId.size() <= 64 && data.packageId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.packageTitle is string && data.packageTitle.size() >= 3 && data.packageTitle.size() <= 160 &&
+      data.travelDate is string && data.travelDate.size() >= 8 && data.travelDate.size() <= 20 &&
+      data.pax is number && data.pax >= 1 && data.pax <= 200 &&
+      data.totalPriceIdr is number && data.totalPriceIdr >= 0 && data.totalPriceIdr <= 1000000000 &&
+      data.totalPriceUsd is number && data.totalPriceUsd >= 0 && data.totalPriceUsd <= 100000 &&
+      data.addOns is string && data.addOns.size() <= 200 &&
+      data.guestName is string && data.guestName.size() >= 2 && data.guestName.size() <= 100 &&
+      data.guestContact is string && data.guestContact.size() >= 5 && data.guestContact.size() <= 120 &&
+      data.pickupNotes is string && data.pickupNotes.size() <= 300 &&
+      data.status is string && data.status in ['pending', 'confirmed', 'completed', 'cancelled'] &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidTransfer(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'routeId',
+        'routeName',
+        'vehicleType',
+        'pickupDate',
+        'flightCode',
+        'priceIdr',
+        'priceUsd',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'routeId',
+        'routeName',
+        'vehicleType',
+        'pickupDate',
+        'flightCode',
+        'priceIdr',
+        'priceUsd',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.routeId is string && data.routeId.size() >= 3 && data.routeId.size() <= 64 && data.routeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.routeName is string && data.routeName.size() >= 3 && data.routeName.size() <= 160 &&
+      data.vehicleType is string && data.vehicleType in ['avanza', 'innova', 'hiace'] &&
+      data.pickupDate is string && data.pickupDate.size() >= 8 && data.pickupDate.size() <= 20 &&
+      data.flightCode is string && data.flightCode.size() <= 60 &&
+      data.priceIdr is number && data.priceIdr >= 0 && data.priceIdr <= 50000000 &&
+      data.priceUsd is number && data.priceUsd >= 0 && data.priceUsd <= 5000 &&
+      data.status is string && data.status in ['pending', 'confirmed', 'completed', 'cancelled'] &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidInquiry(data) {
+      return data.keys().hasAll([
+        'ownerId',
+        'guestName',
+        'contactInfo',
+        'segment',
+        'paxCount',
+        'notes',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId',
+        'guestName',
+        'contactInfo',
+        'segment',
+        'paxCount',
+        'notes',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.guestName is string && data.guestName.size() >= 2 && data.guestName.size() <= 100 &&
+      data.contactInfo is string && data.contactInfo.size() >= 5 && data.contactInfo.size() <= 120 &&
+      data.segment is string && data.segment.size() >= 2 && data.segment.size() <= 80 &&
+      data.paxCount is number && data.paxCount >= 1 && data.paxCount <= 500 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.status is string && data.status in ['new', 'replied', 'closed'] &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Connection test path (read-only for connection verification)
+    match /test/connection {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // Admins registry (strictly read-only from client; managed via console/server)
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow list, write: if false;
+    }
+
+    // Collection 1: Tour Package Bookings
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+
+      allow create: if isVerifiedUser() &&
+        isValidId(bookingId) &&
+        isValidBooking(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(bookingId) &&
+        isValidBooking(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() || (
+            existing().ownerId == request.auth.uid &&
+            !(existing().status in ['completed', 'cancelled']) && (
+              // Action 1: Owner cancels their pending booking
+              (incoming().status == 'cancelled' &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+              // Action 2: Owner updates pickup notes or travel date while pending
+              (existing().status == 'pending' &&
+               incoming().status == 'pending' &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['travelDate', 'pickupNotes', 'updatedAt']))
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(bookingId) && isAdmin();
+    }
+
+    // Collection 2: LOP Airport Transfer & Car Charter Reservations
+    match /transfers/{transferId} {
+      allow get: if isSignedIn() && isValidId(transferId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+
+      allow create: if isVerifiedUser() &&
+        isValidId(transferId) &&
+        isValidTransfer(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(transferId) &&
+        isValidTransfer(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() || (
+            existing().ownerId == request.auth.uid &&
+            !(existing().status in ['completed', 'cancelled']) && (
+              // Action 1: Owner cancels pending transfer
+              (incoming().status == 'cancelled' &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+              // Action 2: Owner updates flight code or pickup date while pending
+              (existing().status == 'pending' &&
+               incoming().status == 'pending' &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['pickupDate', 'flightCode', 'updatedAt']))
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(transferId) && isAdmin();
+    }
+
+    // Collection 3: Custom Itinerary & Corporate MICE Inquiries
+    match /inquiries/{inquiryId} {
+      allow get: if isSignedIn() && isValidId(inquiryId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+
+      allow create: if isVerifiedUser() &&
+        isValidId(inquiryId) &&
+        isValidInquiry(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().status == 'new' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(inquiryId) &&
+        isValidInquiry(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() || (
+            existing().ownerId == request.auth.uid &&
+            existing().status != 'closed' && (
+              // Action 1: Owner updates notes while status is new
+              (existing().status == 'new' &&
+               incoming().status == 'new' &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'paxCount', 'updatedAt'])) ||
+              // Action 2: Owner closes their inquiry
+              (incoming().status == 'closed' &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(inquiryId) && isAdmin();
+    }
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "Direct tour package booking record for Lombok Nusantara Travel.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the authenticated user who created the booking.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bookingRef": {
+          "type": "string",
+          "description": "Unique human-readable booking reference code.",
+          "minLength": 4,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "packageId": {
+          "type": "string",
+          "description": "Identifier of the selected Lombok tour package.",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "packageTitle": {
+          "type": "string",
+          "description": "Title of the selected tour package.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "travelDate": {
+          "type": "string",
+          "description": "Scheduled departure date in YYYY-MM-DD format.",
+          "minLength": 8,
+          "maxLength": 20
+        },
+        "pax": {
+          "type": "number",
+          "description": "Number of guests joining the tour."
+        },
+        "totalPriceIdr": {
+          "type": "number",
+          "description": "Total direct booking estimate in Indonesian Rupiah."
+        },
+        "totalPriceUsd": {
+          "type": "number",
+          "description": "Total direct booking estimate in US Dollars."
+        },
+        "addOns": {
+          "type": "string",
+          "description": "Selected optional add-ons such as airport pickup or drone documentation.",
+          "maxLength": 200
+        },
+        "guestName": {
+          "type": "string",
+          "description": "Full name of the lead passenger.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "guestContact": {
+          "type": "string",
+          "description": "WhatsApp number or email address of the lead passenger.",
+          "minLength": 5,
+          "maxLength": 120
+        },
+        "pickupNotes": {
+          "type": "string",
+          "description": "Hotel pickup location or flight number notes.",
+          "maxLength": 300
+        },
+        "status": {
+          "type": "string",
+          "description": "Reservation lifecycle status.",
+          "enum": ["pending", "confirmed", "completed", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the booking was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the booking was last updated."
+        }
+      },
+      "required": [
+        "ownerId",
+        "bookingRef",
+        "packageId",
+        "packageTitle",
+        "travelDate",
+        "pax",
+        "totalPriceIdr",
+        "totalPriceUsd",
+        "addOns",
+        "guestName",
+        "guestContact",
+        "pickupNotes",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TransferReservation": {
+      "title": "TransferReservation",
+      "description": "LOP Airport transfer or private vehicle charter reservation.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the authenticated user who booked the transfer.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "routeId": {
+          "type": "string",
+          "description": "Route identifier.",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "routeName": {
+          "type": "string",
+          "description": "Origin and destination route label.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "vehicleType": {
+          "type": "string",
+          "description": "Selected vehicle class.",
+          "enum": ["avanza", "innova", "hiace"]
+        },
+        "pickupDate": {
+          "type": "string",
+          "description": "Scheduled pickup date.",
+          "minLength": 8,
+          "maxLength": 20
+        },
+        "flightCode": {
+          "type": "string",
+          "description": "Flight number or arrival time note.",
+          "maxLength": 60
+        },
+        "priceIdr": {
+          "type": "number",
+          "description": "Direct rate in IDR."
+        },
+        "priceUsd": {
+          "type": "number",
+          "description": "Direct rate in USD."
+        },
+        "status": {
+          "type": "string",
+          "description": "Transfer reservation status.",
+          "enum": ["pending", "confirmed", "completed", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update server timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "routeId",
+        "routeName",
+        "vehicleType",
+        "pickupDate",
+        "flightCode",
+        "priceIdr",
+        "priceUsd",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CustomInquiry": {
+      "title": "CustomInquiry",
+      "description": "Custom Lombok itinerary or corporate MICE inquiry.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the authenticated user submitting the inquiry.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "guestName": {
+          "type": "string",
+          "description": "Name of the requester or company.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "contactInfo": {
+          "type": "string",
+          "description": "WhatsApp number or email address.",
+          "minLength": 5,
+          "maxLength": 120
+        },
+        "segment": {
+          "type": "string",
+          "description": "Trip category or segment.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "paxCount": {
+          "type": "number",
+          "description": "Estimated number of participants."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Custom itinerary notes and preferred dates.",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "description": "Inquiry follow-up status.",
+          "enum": ["new", "replied", "closed"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update server timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "guestName",
+        "contactInfo",
+        "segment",
+        "paxCount",
+        "notes",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted admin role marker document.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Verified administrator email.",
+          "minLength": 5,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when admin was registered."
+        }
+      },
+      "required": ["email", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Stores direct tour package bookings scoped to the booking owner and agency admins."
+    },
+    "/transfers/{transferId}": {
+      "schema": "TransferReservation",
+      "description": "Stores LOP airport transfer and private car charter reservations."
+    },
+    "/inquiries/{inquiryId}": {
+      "schema": "CustomInquiry",
+      "description": "Stores custom itinerary and corporate MICE inquiries."
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminRecord",
+      "description": "Read-only admin registry managed strictly via backend/console."
+    }
+  }
+}

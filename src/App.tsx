@@ -3,23 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
-  MapPin,
   ArrowRight,
   Check,
-  Calendar,
-  Car,
-  Ship,
-  Compass,
-  PhoneCall,
   FileText,
-  ShieldCheck,
   ChevronRight,
-  Globe,
-  MessageCircle
+  MessageCircle,
+  Database,
+  LogIn
 } from 'lucide-react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Language,
   Currency,
@@ -32,13 +28,33 @@ import {
   TourPackage,
   DestinationGuide
 } from './data/lombokData';
+import {
+  auth,
+  db,
+  signInWithGoogle,
+  handleFirestoreError,
+  OperationType
+} from './firebase';
 import { PackageDetailModal } from './components/PackageDetailModal';
 import { BlueprintModal } from './components/BlueprintModal';
 import { GuideModal } from './components/GuideModal';
+import { ReservationsModal } from './components/ReservationsModal';
 
 export default function App() {
   const [lang, setLang] = useState<Language>('id');
   const [currency, setCurrency] = useState<Currency>('IDR');
+
+  // Firebase Auth State
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, []);
 
   // Package Filters
   const [regionFilter, setRegionFilter] = useState<string>('all');
@@ -50,6 +66,7 @@ export default function App() {
   const [selectedPackage, setSelectedPackage] = useState<TourPackage | null>(null);
   const [selectedGuide, setSelectedGuide] = useState<DestinationGuide | null>(null);
   const [isBlueprintOpen, setIsBlueprintOpen] = useState<boolean>(false);
+  const [isReservationsOpen, setIsReservationsOpen] = useState<boolean>(false);
 
   // Interactive Airport Transfer & Car Charter Calculator State
   const [selectedRouteId, setSelectedRouteId] = useState<string>(TRANSFER_ROUTES[0].id);
@@ -57,6 +74,7 @@ export default function App() {
   const [transferDate, setTransferDate] = useState<string>('2026-11-18');
   const [flightCode, setFlightCode] = useState<string>('');
   const [transferBookedMsg, setTransferBookedMsg] = useState<string>('');
+  const [transferSavedToDb, setTransferSavedToDb] = useState<boolean>(false);
 
   // Interactive Lombok Zone Explorer State
   const [activeZone, setActiveZone] = useState<'south' | 'north' | 'east' | 'west'>('south');
@@ -72,6 +90,7 @@ export default function App() {
   const [inquiryNotes, setInquiryNotes] = useState<string>('');
   const [inquiryError, setInquiryError] = useState<string>('');
   const [inquirySubmitted, setInquirySubmitted] = useState<boolean>(false);
+  const [inquirySavedToDb, setInquirySavedToDb] = useState<boolean>(false);
 
   const formatMoney = (idr: number, usd: number) => {
     if (currency === 'IDR') {
@@ -118,26 +137,52 @@ export default function App() {
     transferPriceObj.usd * (1 + currentTransferRoute.otaMarkupPercent / 100)
   );
 
-  const handleBookTransfer = (e: React.FormEvent) => {
+  const handleBookTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     const routeName = currentTransferRoute.destination[lang];
     const priceText = formatMoney(transferPriceObj.idr, transferPriceObj.usd);
+
+    if (user) {
+      const newDocRef = doc(collection(db, 'transfers'));
+      const path = `transfers/${newDocRef.id}`;
+      try {
+        await setDoc(newDocRef, {
+          ownerId: user.uid,
+          routeId: currentTransferRoute.id.slice(0, 64),
+          routeName: routeName.slice(0, 160),
+          vehicleType,
+          pickupDate: transferDate.slice(0, 20),
+          flightCode: flightCode.trim().slice(0, 60),
+          priceIdr: Math.min(50000000, Math.max(0, Math.round(transferPriceObj.idr))),
+          priceUsd: Math.min(5000, Math.max(0, Math.round(transferPriceObj.usd))),
+          status: 'pending',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        setTransferSavedToDb(true);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    } else {
+      setTransferSavedToDb(false);
+    }
+
     const msg =
       lang === 'id'
-        ? `Reservasi Transfer (${routeName}) dengan ${transferPriceObj.label} pada ${transferDate} (${flightCode || 'Tanpa Kode Penerbangan'}) senilai ${priceText} siap dikonfirmasi via WhatsApp.`
+        ? `Reservasi Transfer (${routeName}) dengan ${transferPriceObj.label} pada ${transferDate} (${flightCode || 'Tanpa Kode Penerbangan'}) senilai ${priceText} siap dikonfirmasi.`
         : `Transfer reservation (${routeName}) with ${transferPriceObj.label} on ${transferDate} (${flightCode || 'Flight TBA'}) at ${priceText} is ready for confirmation.`;
     setTransferBookedMsg(msg);
   };
 
-  const handleInquirySubmit = (e: React.FormEvent) => {
+  const handleInquirySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inquiryName.trim() || inquiryName.trim().length < 2) {
       setInquiryError(
-        lang === 'id' ? 'Mohon masukkan nama lengkap Anda.' : 'Please enter your full name.'
+        lang === 'id' ? 'Mohon masukkan nama lengkap Anda (min. 2 karakter).' : 'Please enter your full name.'
       );
       return;
     }
-    if (!inquiryEmailOrWa.trim() || inquiryEmailOrWa.trim().length < 6) {
+    if (!inquiryEmailOrWa.trim() || inquiryEmailOrWa.trim().length < 5) {
       setInquiryError(
         lang === 'id'
           ? 'Mohon masukkan nomor WhatsApp atau alamat email yang valid.'
@@ -146,6 +191,31 @@ export default function App() {
       return;
     }
     setInquiryError('');
+
+    if (user) {
+      const newDocRef = doc(collection(db, 'inquiries'));
+      const path = `inquiries/${newDocRef.id}`;
+      const numericPax = Math.min(500, Math.max(1, parseInt(inquiryPax, 10) || 2));
+      try {
+        await setDoc(newDocRef, {
+          ownerId: user.uid,
+          guestName: inquiryName.trim().slice(0, 100),
+          contactInfo: inquiryEmailOrWa.trim().slice(0, 120),
+          segment: inquirySegment.slice(0, 80),
+          paxCount: numericPax,
+          notes: inquiryNotes.trim().slice(0, 500),
+          status: 'new',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        setInquirySavedToDb(true);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    } else {
+      setInquirySavedToDb(false);
+    }
+
     setInquirySubmitted(true);
   };
 
@@ -200,7 +270,7 @@ export default function App() {
             href="#"
             className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 font-display whitespace-nowrap shrink-0"
           >
-            Lombok Nusantara
+            LOMBOK NUSANTARA TRAVEL
           </a>
 
           {/* Zone 2: 5 concise single-line text navigation links */}
@@ -249,16 +319,16 @@ export default function App() {
         </div>
       </header>
 
-      {/* WORKSPACE UTILITY BAR BELOW THE FOLD / TOP BAR (Bilingual Toggle, Currency Toggle & Project Blueprint) */}
+      {/* WORKSPACE UTILITY BAR BELOW THE FOLD / TOP BAR (Bilingual Toggle, Currency Toggle, Cloud Database & Blueprint) */}
       <div className="bg-slate-900 text-slate-200 border-b border-slate-800">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2 text-slate-300">
-            <span>PT Lombok Nusantara Wisata</span>
+            <span className="font-semibold text-white">LOMBOK NUSANTARA TRAVEL</span>
             <span aria-hidden="true">·</span>
             <span>{lang === 'id' ? 'Harga Langsung Agen Lokal (Hemat 18–25% vs OTA)' : 'Direct Local Operator Rates (Save 18–25% vs OTAs)'}</span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 ml-auto">
+          <div className="flex flex-wrap items-center gap-2.5 ml-auto">
             {/* Language Toggle */}
             <div className="flex items-center bg-slate-800 p-0.5 rounded-md border border-slate-700">
               <button
@@ -303,6 +373,24 @@ export default function App() {
               </button>
             </div>
 
+            {/* Cloud Database & Reservations Console Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsReservationsOpen(true)}
+              className="px-3 py-1 bg-teal-800 hover:bg-teal-700 text-white border border-teal-700 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>
+                {user
+                  ? lang === 'id'
+                    ? `Database Reservasi (${user.displayName?.split(' ')[0] || 'Aktif'})`
+                    : `Cloud DB (${user.displayName?.split(' ')[0] || 'Active'})`
+                  : lang === 'id'
+                  ? 'Database & Login'
+                  : 'Cloud DB & Login'}
+              </span>
+            </button>
+
             {/* Blueprint Strategy Drawer Trigger */}
             <button
               type="button"
@@ -310,7 +398,7 @@ export default function App() {
               className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-teal-300 border border-slate-700 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>{lang === 'id' ? 'Dokumen Rencana & SEO (8 Minggu)' : '8-Week Project & SEO Blueprint'}</span>
+              <span>{lang === 'id' ? 'Rencana & SEO (8 Minggu)' : '8-Week Plan & SEO'}</span>
             </button>
           </div>
         </div>
@@ -324,7 +412,7 @@ export default function App() {
             <div className="lg:col-span-6 flex flex-col justify-between space-y-6">
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-teal-800 font-medium">
-                  <span>{lang === 'id' ? 'Biro Perjalanan Wisata Resmi Lombok' : 'Licensed Lombok Destination Management'}</span>
+                  <span className="font-bold tracking-wide">LOMBOK NUSANTARA TRAVEL</span>
                   <span aria-hidden="true">·</span>
                   <span>ASITA NTB & e-Rinjani TNGR</span>
                   <span aria-hidden="true">·</span>
@@ -336,8 +424,8 @@ export default function App() {
                   style={{ fontSize: 'clamp(2.25rem, 3.8vw, 3.5rem)' }}
                 >
                   {lang === 'id'
-                    ? 'Jelajahi Gili, Mandalika & Puncak Rinjani Langsung Bersama Tim Lokal.'
-                    : 'Experience the Gilis, Mandalika & Mount Rinjani Direct with Local Experts.'}
+                    ? 'LOMBOK NUSANTARA TRAVEL — Jelajahi Gili, Mandalika & Rinjani Bersama Tim Lokal.'
+                    : 'LOMBOK NUSANTARA TRAVEL — Experience the Gilis, Mandalika & Rinjani Direct.'}
                 </h1>
 
                 <p className="text-base sm:text-lg text-slate-600 leading-relaxed max-w-[62ch]">
@@ -357,12 +445,14 @@ export default function App() {
                     <span>{lang === 'id' ? 'Lihat Paket & Harga Langsung' : 'Explore Direct Tour Packages'}</span>
                     <ArrowRight className="w-4 h-4" />
                   </a>
-                  <a
-                    href="#layanan"
-                    className="px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0"
+                  <button
+                    type="button"
+                    onClick={() => setIsReservationsOpen(true)}
+                    className="px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2"
                   >
-                    {lang === 'id' ? 'Cek Tarif Jemput Bandara LOP' : 'LOP Airport Transfer Rates'}
-                  </a>
+                    <Database className="w-4 h-4 text-teal-800" />
+                    <span>{lang === 'id' ? 'Cek Reservasi & Database' : 'Cloud Reservations & DB'}</span>
+                  </button>
                 </div>
 
                 <div className="pt-4 border-t border-slate-200">
@@ -455,11 +545,11 @@ export default function App() {
               </p>
             </div>
             <div>
-              <div className="text-2xl font-bold font-mono-num text-slate-900">IDR & Internasional</div>
+              <div className="text-2xl font-bold font-mono-num text-slate-900">Cloud Firestore</div>
               <p className="mt-1 text-xs text-slate-600 leading-relaxed">
                 {lang === 'id'
-                  ? 'Mendukung QRIS, Transfer Bank/VA lokal, e-Faktur Pajak korporat, serta kartu kredit internasional.'
-                  : 'Supports QRIS, Indonesian Bank VA, corporate tax invoices, and international credit cards / Wise.'}
+                  ? 'Setiap reservasi paket, transfer bandara, dan inkuiri tersimpan otomatis di database Firebase terenkripsi.'
+                  : 'All tour bookings, airport transfers, and custom inquiries persist in real-time Cloud Firestore.'}
               </p>
             </div>
           </div>
@@ -483,8 +573,8 @@ export default function App() {
           </div>
           <p className="text-sm text-slate-600 max-w-md">
             {lang === 'id'
-              ? 'Klik pada paket untuk melihat rincian jadwal harian (itinerary), fasilitas inklusi, FAQ, dan kalkulator diskon grup.'
-              : 'Select any package to inspect the full day-by-day schedule, inclusions, FAQs, and instant group discount calculator.'}
+              ? 'Klik pada paket untuk melihat rincian jadwal harian (itinerary), fasilitas inklusi, FAQ, dan menyimpan reservasi ke database.'
+              : 'Select any package to inspect the full day-by-day schedule, inclusions, FAQs, and save your booking directly to Firestore.'}
           </p>
         </div>
 
@@ -893,6 +983,7 @@ export default function App() {
                     </label>
                     <input
                       type="text"
+                      maxLength={60}
                       value={flightCode}
                       onChange={(e) => setFlightCode(e.target.value)}
                       placeholder={lang === 'id' ? 'Contoh: Citilink QG-640 (13:20)' : 'e.g. Scoot TR-260 (10:45)'}
@@ -919,21 +1010,45 @@ export default function App() {
                     type="submit"
                     className="px-4 py-2.5 bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    {lang === 'id' ? 'Pesan Penjemputan Ini' : 'Book Airport Transfer'}
+                    {user
+                      ? lang === 'id'
+                        ? 'Simpan Penjemputan ke Database'
+                        : 'Save Transfer to Cloud DB'
+                      : lang === 'id'
+                      ? 'Pesan Penjemputan Ini'
+                      : 'Book Airport Transfer'}
                   </button>
                 </div>
 
                 {transferBookedMsg && (
                   <div className="p-4 bg-teal-50 border border-teal-200 rounded-lg space-y-2 text-xs text-teal-950">
-                    <p className="font-medium">{transferBookedMsg}</p>
-                    <a
-                      href={`https://wa.me/6281907882410?text=${encodeURIComponent(transferBookedMsg)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 font-semibold text-teal-800 underline"
-                    >
-                      <span>{lang === 'id' ? 'Lanjutkan Konfirmasi ke WhatsApp →' : 'Confirm via WhatsApp →'}</span>
-                    </a>
+                    <p className="font-medium">
+                      {transferSavedToDb
+                        ? lang === 'id'
+                          ? 'Tersimpan di koleksi /transfers Cloud Firestore! '
+                          : 'Saved to /transfers in Cloud Firestore! '
+                        : ''}
+                      {transferBookedMsg}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <a
+                        href={`https://wa.me/6281907882410?text=${encodeURIComponent(transferBookedMsg)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 font-semibold text-teal-800 underline"
+                      >
+                        <span>{lang === 'id' ? 'Lanjutkan Konfirmasi ke WhatsApp →' : 'Confirm via WhatsApp →'}</span>
+                      </a>
+                      {transferSavedToDb && (
+                        <button
+                          type="button"
+                          onClick={() => setIsReservationsOpen(true)}
+                          className="inline-flex items-center gap-1 font-semibold text-slate-900 underline cursor-pointer"
+                        >
+                          <span>{lang === 'id' ? 'Lihat di Database Reservasi' : 'View in Cloud DB'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </form>
@@ -1226,6 +1341,7 @@ export default function App() {
                       </label>
                       <input
                         type="text"
+                        maxLength={100}
                         value={inquiryName}
                         onChange={(e) => setInquiryName(e.target.value)}
                         placeholder={lang === 'id' ? 'Nama Anda / Instansi' : 'Your Name / Company'}
@@ -1238,6 +1354,7 @@ export default function App() {
                       </label>
                       <input
                         type="text"
+                        maxLength={120}
                         value={inquiryEmailOrWa}
                         onChange={(e) => setInquiryEmailOrWa(e.target.value)}
                         placeholder="+62 812-xxxx / email@domain.com"
@@ -1283,7 +1400,7 @@ export default function App() {
                       <input
                         type="number"
                         min={1}
-                        max={300}
+                        max={500}
                         value={inquiryPax}
                         onChange={(e) => setInquiryPax(e.target.value)}
                         className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg font-mono-num focus:bg-white focus:outline-none focus:border-teal-700"
@@ -1299,6 +1416,7 @@ export default function App() {
                     </label>
                     <textarea
                       rows={3}
+                      maxLength={500}
                       value={inquiryNotes}
                       onChange={(e) => setInquiryNotes(e.target.value)}
                       placeholder={
@@ -1320,7 +1438,11 @@ export default function App() {
                     type="submit"
                     className="w-full py-3 px-4 bg-teal-800 hover:bg-teal-900 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer"
                   >
-                    {lang === 'id'
+                    {user
+                      ? lang === 'id'
+                        ? 'Simpan Inkuiri ke Database & Minta Penawaran'
+                        : 'Save Inquiry to Cloud DB & Request Proposal'
+                      : lang === 'id'
                       ? 'Kirim Permintaan Itinerary & Penawaran'
                       : 'Request Direct Proposal'}
                   </button>
@@ -1333,14 +1455,18 @@ export default function App() {
                       : `Thank you, ${inquiryName}! Your inquiry has been logged.`}
                   </div>
                   <p className="text-xs text-slate-700 leading-relaxed">
-                    {lang === 'id'
-                      ? `Konsultan perjalanan kami akan mengirimkan draf itinerary beserta rincian biaya (${inquirySegment} untuk ${inquiryPax} peserta) ke ${inquiryEmailOrWa}. Anda juga dapat langsung terhubung ke WhatsApp resmi kami di bawah ini:`
-                      : `Our local travel specialist will send a customized proposal (${inquirySegment} for ${inquiryPax} guests) to ${inquiryEmailOrWa}. For instant chat, click below:`}
+                    {inquirySavedToDb
+                      ? lang === 'id'
+                        ? 'Data permintaan Anda telah disimpan secara aman di koleksi /inquiries Cloud Firestore.'
+                        : 'Your custom request has been stored in your /inquiries Cloud Firestore collection.'
+                      : lang === 'id'
+                      ? `Konsultan perjalanan kami akan mengirimkan draf itinerary beserta rincian biaya (${inquirySegment} untuk ${inquiryPax} peserta) ke ${inquiryEmailOrWa}.`
+                      : `Our local travel specialist will send a customized proposal (${inquirySegment} for ${inquiryPax} guests) to ${inquiryEmailOrWa}.`}
                   </p>
                   <div className="flex flex-wrap items-center gap-3">
                     <a
                       href={`https://wa.me/6281907882410?text=${encodeURIComponent(
-                        `Halo Lombok Nusantara Travel, saya ${inquiryName} (${inquiryEmailOrWa}) ingin konsultasi paket ${inquirySegment} untuk ${inquiryPax} orang. Catatan: ${inquiryNotes}`
+                        `Halo LOMBOK NUSANTARA TRAVEL, saya ${inquiryName} (${inquiryEmailOrWa}) ingin konsultasi paket ${inquirySegment} untuk ${inquiryPax} orang. Catatan: ${inquiryNotes}`
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -1348,9 +1474,21 @@ export default function App() {
                     >
                       {lang === 'id' ? 'Buka Chat WhatsApp Sekarang →' : 'Open WhatsApp Chat Now →'}
                     </a>
+                    {inquirySavedToDb && (
+                      <button
+                        type="button"
+                        onClick={() => setIsReservationsOpen(true)}
+                        className="text-xs font-semibold text-teal-900 underline cursor-pointer"
+                      >
+                        {lang === 'id' ? 'Lihat di Database Reservasi' : 'View in Cloud DB'}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setInquirySubmitted(false)}
+                      onClick={() => {
+                        setInquirySubmitted(false);
+                        setInquirySavedToDb(false);
+                      }}
                       className="text-xs text-slate-600 underline cursor-pointer"
                     >
                       {lang === 'id' ? 'Kirim permintaan lain' : 'Submit another inquiry'}
@@ -1456,7 +1594,7 @@ export default function App() {
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 text-xs">
           <div className="space-y-1">
             <div className="text-white font-display font-semibold text-base">
-              Lombok Nusantara Travel
+              LOMBOK NUSANTARA TRAVEL
             </div>
             <p>
               © 2026 PT Lombok Nusantara Wisata · Senggigi & Kuta Mandalika, Nusa Tenggara Barat.
@@ -1470,9 +1608,13 @@ export default function App() {
             <a href="#layanan" className="hover:text-white transition-colors">
               {lang === 'id' ? 'Transfer Bandara LOP' : 'Airport Transfer'}
             </a>
-            <a href="#destinasi" className="hover:text-white transition-colors">
-              {lang === 'id' ? 'Panduan SEO' : 'Travel Guides'}
-            </a>
+            <button
+              type="button"
+              onClick={() => setIsReservationsOpen(true)}
+              className="text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
+              {lang === 'id' ? 'Database & Reservasi' : 'Cloud Database'}
+            </button>
             <button
               type="button"
               onClick={() => setIsBlueprintOpen(true)}
@@ -1486,11 +1628,11 @@ export default function App() {
 
       {/* COMPACT FLOATING WHATSAPP ACTION (Respects <15% Mobile Sticky Cap) */}
       <a
-        href="https://wa.me/6281907882410?text=Halo%20Lombok%20Nusantara%20Travel%2C%20saya%20ingin%20tanya%20paket%20wisata%20Lombok"
+        href="https://wa.me/6281907882410?text=Halo%20LOMBOK%20NUSANTARA%20TRAVEL%2C%20saya%20ingin%20tanya%20paket%20wisata%20Lombok"
         target="_blank"
         rel="noopener noreferrer"
         className="fixed bottom-4 right-4 z-40 px-4 py-2.5 bg-teal-800 hover:bg-teal-900 text-white text-xs font-semibold rounded-full shadow-lg flex items-center gap-2 transition-transform hover:scale-102"
-        aria-label="Chat WhatsApp Lombok Nusantara Travel"
+        aria-label="Chat WhatsApp LOMBOK NUSANTARA TRAVEL"
       >
         <MessageCircle className="w-4 h-4" />
         <span>{lang === 'id' ? 'Chat Konsultan Lokal' : 'WhatsApp Local Desk'}</span>
@@ -1501,7 +1643,9 @@ export default function App() {
         pkg={selectedPackage}
         lang={lang}
         currency={currency}
+        user={user}
         onClose={() => setSelectedPackage(null)}
+        onOpenReservations={() => setIsReservationsOpen(true)}
       />
 
       <GuideModal
@@ -1518,6 +1662,15 @@ export default function App() {
         isOpen={isBlueprintOpen}
         onClose={() => setIsBlueprintOpen(false)}
         lang={lang}
+      />
+
+      <ReservationsModal
+        isOpen={isReservationsOpen}
+        onClose={() => setIsReservationsOpen(false)}
+        user={user}
+        authReady={authReady}
+        lang={lang}
+        currency={currency}
       />
     </div>
   );
